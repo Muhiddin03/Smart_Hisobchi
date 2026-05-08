@@ -1,0 +1,4 @@
+aiogram==2.25.2
+psycopg2-binary==2.9.9
+fpdf==1.7.2
+matplotlib==3.7.5
