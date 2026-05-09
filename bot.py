@@ -20,7 +20,7 @@ from fpdf import FPDF
 # ───────────────────────────────────────────
 # SOZLAMALAR
 # ───────────────────────────────────────────
-API_TOKEN = os.environ.get('API_TOKEN', '8134339991:AAFd_mha0IyO77lhklIi62b_Q3Y-rlhxEUo')
+API_TOKEN = os.environ.get('API_TOKEN', '8435215607:AAHaJ3guIwMJimnMoTBAzMaPBCBb2ShYeEw')
 ADMIN_ID  = int(os.environ.get('ADMIN_ID', '1680174090'))
 DATABASE_URL = os.environ.get('DATABASE_URL')  # Railway avtomatik beradi
 
