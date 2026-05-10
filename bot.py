@@ -5,7 +5,6 @@ import asyncio
 import io
 import random
 import psycopg2
-import psycopg2.extras
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -22,7 +21,7 @@ from fpdf import FPDF
 # ───────────────────────────────────────────
 API_TOKEN = os.environ.get('API_TOKEN', '8435215607:AAHaJ3guIwMJimnMoTBAzMaPBCBb2ShYeEw')
 ADMIN_ID  = int(os.environ.get('ADMIN_ID', '1680174090'))
-DATABASE_URL = os.environ.get('DATABASE_URL')  # Railway avtomatik beradi
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -34,17 +33,15 @@ def now_uzb():
     return datetime.now(UZB)
 
 # ───────────────────────────────────────────
-# POSTGRESQL ULANISH
+# POSTGRESQL — ULANISH VA JADVALLAR
 # ───────────────────────────────────────────
 def get_conn():
-    """Har safar yangi ulanish oladi (thread-safe)"""
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    """Jadvallarni yaratadi (bot ishga tushganda bir marta chaqiriladi)"""
     conn = get_conn()
     cur  = conn.cursor()
-    cur.execute('''
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id       BIGINT PRIMARY KEY,
             real_name     TEXT,
@@ -55,8 +52,8 @@ def init_db():
             sub_end_date  TIMESTAMPTZ,
             is_active     INTEGER DEFAULT 1
         )
-    ''')
-    cur.execute('''
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id       SERIAL PRIMARY KEY,
             user_id  BIGINT,
@@ -66,8 +63,8 @@ def init_db():
             date     TIMESTAMPTZ,
             currency TEXT DEFAULT 'so''m'
         )
-    ''')
-    cur.execute('''
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS categories (
             id      SERIAL PRIMARY KEY,
             user_id BIGINT,
@@ -75,15 +72,12 @@ def init_db():
             type    TEXT,
             UNIQUE(user_id, name, type)
         )
-    ''')
+    """)
     conn.commit()
     cur.close()
     conn.close()
     logging.info("PostgreSQL jadvallari tayyor ✅")
 
-# ───────────────────────────────────────────
-# DB YORDAMCHI FUNKSIYALARI
-# ───────────────────────────────────────────
 def db_fetchone(query, params=()):
     conn = get_conn()
     cur  = conn.cursor()
@@ -110,8 +104,7 @@ def db_execute(query, params=()):
     cur.close()
     conn.close()
 
-def db_executemany(queries_params):
-    """Bir nechta so'rovni bitta ulanishda bajaradi"""
+def db_execute_many(queries_params):
     conn = get_conn()
     cur  = conn.cursor()
     for query, params in queries_params:
@@ -119,6 +112,17 @@ def db_executemany(queries_params):
     conn.commit()
     cur.close()
     conn.close()
+
+def _to_dt(val):
+    if val is None:
+        return None
+    if isinstance(val, str):
+        dt = datetime.fromisoformat(val)
+    else:
+        dt = val
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UZB)
+    return dt
 
 # ───────────────────────────────────────────
 # STATES
@@ -177,7 +181,7 @@ def smart_parse(text: str):
         amount   = num * mult.get(suffix, 1)
         currency = "so'm"
 
-    rest     = raw.replace(m.group(0), "").strip()
+    rest = raw.replace(m.group(0), "").strip()
     category = rest.capitalize() if rest else "Boshqa"
     return amount, category, currency, now_uzb().isoformat()
 
@@ -218,41 +222,15 @@ async def subscribed(uid: int) -> bool:
     reg_date_val, sub_end_val, is_active = row
     if is_active == 0:
         return False
-
-    # PostgreSQL timestamptz qaytaradi (datetime object)
-    if isinstance(reg_date_val, str):
-        reg_dt = datetime.fromisoformat(reg_date_val)
-    else:
-        reg_dt = reg_date_val
-    if reg_dt.tzinfo is None:
-        reg_dt = reg_dt.replace(tzinfo=UZB)
-
+    reg_dt = _to_dt(reg_date_val)
     n = now_uzb()
     if n < reg_dt + timedelta(days=1):
         return True
-
     if sub_end_val:
-        if isinstance(sub_end_val, str):
-            sub_dt = datetime.fromisoformat(sub_end_val)
-        else:
-            sub_dt = sub_end_val
-        if sub_dt.tzinfo is None:
-            sub_dt = sub_dt.replace(tzinfo=UZB)
+        sub_dt = _to_dt(sub_end_val)
         if n < sub_dt:
             return True
     return False
-
-def _to_dt(val):
-    """DB dan kelgan qiymatni timezone-aware datetime ga o'tkazadi."""
-    if val is None:
-        return None
-    if isinstance(val, str):
-        dt = datetime.fromisoformat(val)
-    else:
-        dt = val
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UZB)
-    return dt
 
 # ───────────────────────────────────────────
 # FON — ESLATMALAR
@@ -260,7 +238,7 @@ def _to_dt(val):
 async def notifier():
     while True:
         await asyncio.sleep(60)
-        n    = now_uzb()
+        n = now_uzb()
         rows = db_fetchall(
             "SELECT user_id, real_name, reg_date, sub_end_date, last_activity, phone "
             "FROM users WHERE is_active=1"
@@ -383,7 +361,9 @@ async def process_fin(msg: types.Message, state: FSMContext):
     uid = msg.from_user.id
 
     if not await registered(uid):
-        return await msg.answer("⚠️ Avval ro'yxatdan o'ting! /start bosing.")
+        return await msg.answer(
+            "⚠️ Avval ro'yxatdan o'ting! /start bosing."
+        )
 
     if not await subscribed(uid):
         return await msg.answer(BLOCKED_MSG, parse_mode="Markdown")
@@ -419,8 +399,8 @@ async def process_fin(msg: types.Message, state: FSMContext):
 async def choose_cat(cb: types.CallbackQuery, state: FSMContext):
     t_type = cb.data.split('_', 1)[1]
     await state.update_data(current_type=t_type)
-    data   = await state.get_data()
-    uid    = cb.from_user.id
+    data = await state.get_data()
+    uid  = cb.from_user.id
 
     existing = db_fetchall(
         "SELECT DISTINCT name FROM categories WHERE user_id=%s AND type=%s",
@@ -451,7 +431,7 @@ async def save_fin(cb: types.CallbackQuery, state: FSMContext):
     amt   = data.get('amount', 0)
     dt    = data.get('date_time', now_uzb().isoformat())
 
-    db_executemany([
+    db_execute_many([
         (
             "INSERT INTO transactions (user_id, type, amount, category, date, currency) "
             "VALUES (%s,%s,%s,%s,%s,%s)",
@@ -466,10 +446,10 @@ async def save_fin(cb: types.CallbackQuery, state: FSMContext):
     await touch(uid)
     await state.finish()
 
-    lbl = "Daromad (Kirim)"   if ttype == "KIRIM" else "Xarajat (Chiqim)"
-    tip = ("Daromad qo'shildi. Moliyaviy intizomingizga gap yo'q!"
-           if ttype == "KIRIM"
-           else "Xarajat qayd etildi. Pullar hisobini bilish — boylik garovidir!")
+    lbl  = "Daromad (Kirim)"   if ttype == "KIRIM" else "Xarajat (Chiqim)"
+    tip  = ("Daromad qo'shildi. Moliyaviy intizomingizga gap yo'q!"
+            if ttype == "KIRIM"
+            else "Xarajat qayd etildi. Pullar hisobini bilish — boylik garovidir!")
 
     await cb.message.edit_text(
         "✅ *Muvaffaqiyatli saqlandi!*\n"
@@ -500,7 +480,7 @@ async def edit_menu(cb: types.CallbackQuery, state: FSMContext):
         d_str = now_uzb().strftime('%d.%m.%Y %H:%M')
 
     kb = types.InlineKeyboardMarkup(row_width=1).add(
-        types.InlineKeyboardButton("💵 Summani o'zgartirish",      callback_data="ed_amount"),
+        types.InlineKeyboardButton("💵 Summani o'zgartirish",     callback_data="ed_amount"),
         types.InlineKeyboardButton("🏷 Kategoriyani o'zgartirish", callback_data="ed_cat"),
         types.InlineKeyboardButton("📅 Sanani o'zgartirish",       callback_data="ed_date"),
         types.InlineKeyboardButton("⬅️ Orqaga",                    callback_data="ed_back"),
@@ -578,7 +558,13 @@ async def ed_date_ask(cb: types.CallbackQuery, state: FSMContext):
 async def ed_date_get(msg: types.Message, state: FSMContext):
     raw = msg.text.strip()
     dt  = None
-    for fmt in ["%d.%m.%Y %H:%M", "%Y-%m-%d %H:%M", "%d.%m.%Y", "%Y-%m-%d"]:
+    formats = [
+        "%d.%m.%Y %H:%M",
+        "%Y-%m-%d %H:%M",
+        "%d.%m.%Y",
+        "%Y-%m-%d",
+    ]
+    for fmt in formats:
         try:
             dt = datetime.strptime(raw, fmt)
             break
@@ -672,10 +658,10 @@ async def stats_menu(msg: types.Message):
         return await msg.answer(BLOCKED_MSG, parse_mode="Markdown")
     await touch(uid)
     kb = types.InlineKeyboardMarkup(row_width=2).add(
-        types.InlineKeyboardButton("📆 Bugun",   callback_data="st_bugun"),
-        types.InlineKeyboardButton("📅 Shu oy",  callback_data="st_oy"),
-        types.InlineKeyboardButton("📊 Oyma-oy", callback_data="st_oymaoy"),
-        types.InlineKeyboardButton("🌍 Umumiy",  callback_data="st_all"),
+        types.InlineKeyboardButton("📆 Bugun",    callback_data="st_bugun"),
+        types.InlineKeyboardButton("📅 Shu oy",   callback_data="st_oy"),
+        types.InlineKeyboardButton("📊 Oyma-oy",  callback_data="st_oymaoy"),
+        types.InlineKeyboardButton("🌍 Umumiy",   callback_data="st_all"),
     )
     await msg.answer("Qaysi davrning natijasini ko'rmoqchisiz? 😊", reply_markup=kb)
 
@@ -688,8 +674,7 @@ def _collect_stats(uid, start_date, end_date=None):
         )
         cats = db_fetchall(
             "SELECT type, category, currency, SUM(amount) FROM transactions "
-            "WHERE user_id=%s AND date>=%s AND date<=%s "
-            "GROUP BY type,category,currency ORDER BY type,SUM(amount) DESC",
+            "WHERE user_id=%s AND date>=%s AND date<=%s GROUP BY type,category,currency ORDER BY type,SUM(amount) DESC",
             (uid, start_date, end_date)
         )
     else:
@@ -700,8 +685,7 @@ def _collect_stats(uid, start_date, end_date=None):
         )
         cats = db_fetchall(
             "SELECT type, category, currency, SUM(amount) FROM transactions "
-            "WHERE user_id=%s AND date>=%s "
-            "GROUP BY type,category,currency ORDER BY type,SUM(amount) DESC",
+            "WHERE user_id=%s AND date>=%s GROUP BY type,category,currency ORDER BY type,SUM(amount) DESC",
             (uid, start_date)
         )
 
@@ -734,7 +718,7 @@ def _build_stat_text(title, period_str, s, cats):
     return txt
 
 async def _send_stat(uid: int, title: str, period_str: str, s: dict, cats: list, name: str):
-    txt      = _build_stat_text(title, period_str, s, cats)
+    txt = _build_stat_text(title, period_str, s, cats)
     has_data = any(v > 0 for t in s.values() for v in t.values())
     if has_data:
         k_val  = s['KIRIM']["so'm"]  + s['KIRIM']["$"]  * 12800
@@ -781,12 +765,12 @@ async def show_stats(cb: types.CallbackQuery):
         rows = db_fetchall(
             "SELECT TO_CHAR(date, 'YYYY-MM') as mo, type, currency, SUM(amount) "
             "FROM transactions WHERE user_id=%s "
-            "GROUP BY mo, type, currency ORDER BY mo DESC",
+            "GROUP BY TO_CHAR(date, 'YYYY-MM'), type, currency ORDER BY mo DESC",
             (uid,)
         )
         if not rows:
             return await bot.send_message(uid, f"Ma'lumot yo'q. 😊\n\n{smart_suffx()}")
-        txt    = "📊 *Oyma-Oy Hisobot*\n"
+        txt = "📊 *Oyma-Oy Hisobot*\n"
         cur_mo = None
         for mo, ttype, curr, total in rows:
             if cur_mo != mo:
@@ -801,16 +785,15 @@ async def show_stats(cb: types.CallbackQuery):
         await bot.send_message(uid, txt + f"\n\n{smart_suffx()}", parse_mode="Markdown")
 
     elif mode == "all":
-        row   = db_fetchone("SELECT reg_date FROM users WHERE user_id=%s", (uid,))
-        start = row[0].isoformat() if row and row[0] else "2000-01-01T00:00:00+05:00"
-        if hasattr(start, 'isoformat'):
-            start = start.isoformat()
+        row = db_fetchone("SELECT reg_date FROM users WHERE user_id=%s", (uid,))
+        start = _to_dt(row[0]).isoformat() if row and row[0] else "2000-01-01T00:00:00+05:00"
         s, cats = _collect_stats(uid, start)
-        period  = f"{_to_dt(row[0]).strftime('%d.%m.%Y') if row and row[0] else '?'} — {n.strftime('%d.%m.%Y')}"
+        start_dt = _to_dt(row[0]) if row and row[0] else _to_dt("2000-01-01T00:00:00")
+        period = f"{start_dt.strftime('%d.%m.%Y')} — {n.strftime('%d.%m.%Y')}"
         await _send_stat(uid, "Umumiy Hisobot", period, s, cats, name)
 
 # ───────────────────────────────────────────
-# KATEGORIYALAR
+# KATEGORIYALAR — YANGILANGAN (tur tanlash + tahrirlash/o'chirish)
 # ───────────────────────────────────────────
 @dp.message_handler(lambda m: m.text == "📂 KATEGORIYALAR")
 async def cats_list(msg: types.Message):
@@ -823,6 +806,7 @@ async def cats_list(msg: types.Message):
     )
     await msg.answer("Qaysi turdagi kategoriyalarni ko'rmoqchisiz?", reply_markup=kb)
 
+
 @dp.callback_query_handler(lambda c: c.data.startswith('cattype_'))
 async def cats_by_type(cb: types.CallbackQuery):
     ttype = cb.data[8:]
@@ -830,7 +814,9 @@ async def cats_by_type(cb: types.CallbackQuery):
     await _show_cat_list(cb.message, uid, ttype, edit=True)
     await cb.answer()
 
+
 async def _show_cat_list(msg: types.Message, uid: int, ttype: str, edit: bool = False):
+    """Tanlangan turdagi kategoriyalar ro'yxatini inline tugmalar bilan ko'rsatadi."""
     rows = db_fetchall(
         "SELECT DISTINCT category FROM transactions WHERE user_id=%s AND type=%s ORDER BY category",
         (uid, ttype)
@@ -850,7 +836,9 @@ async def _show_cat_list(msg: types.Message, uid: int, ttype: str, edit: bool = 
 
     kb = types.InlineKeyboardMarkup(row_width=1)
     for (cat,) in rows:
-        kb.add(types.InlineKeyboardButton(f"📁 {cat}", callback_data=f"vc_{ttype}_{cat}"))
+        kb.add(types.InlineKeyboardButton(
+            f"📁 {cat}", callback_data=f"vc_{ttype}_{cat}"
+        ))
     kb.add(types.InlineKeyboardButton("⬅️ Orqaga", callback_data="cats_back"))
 
     text = f"{icon} *{ttype} kategoriyalari:*\nBatafsil ko'rish yoki boshqarish uchun tanlang."
@@ -858,6 +846,7 @@ async def _show_cat_list(msg: types.Message, uid: int, ttype: str, edit: bool = 
         await msg.edit_text(text, reply_markup=kb, parse_mode="Markdown")
     else:
         await msg.answer(text, reply_markup=kb, parse_mode="Markdown")
+
 
 @dp.callback_query_handler(lambda c: c.data == "cats_back")
 async def cats_back(cb: types.CallbackQuery):
@@ -868,6 +857,8 @@ async def cats_back(cb: types.CallbackQuery):
     await cb.message.edit_text("Qaysi turdagi kategoriyalarni ko'rmoqchisiz?", reply_markup=kb)
     await cb.answer()
 
+
+# ── Kategoriya tarixi + boshqaruv tugmalari ──
 @dp.callback_query_handler(lambda c: c.data.startswith('vc_'))
 async def view_cat(cb: types.CallbackQuery):
     parts = cb.data.split('_', 2)
@@ -889,21 +880,23 @@ async def view_cat(cb: types.CallbackQuery):
     if rows:
         tot = 0
         for dt, amt, curr in rows:
-            dt_str = _to_dt(dt).strftime('%d.%m.%Y %H:%M') if dt else "?"
-            txt   += f"  • {dt_str} | {amt:,.0f} {curr}\n"
-            tot   += (amt or 0)
+            dt_obj = _to_dt(dt)
+            txt += f"  • {dt_obj.strftime('%d.%m.%Y %H:%M')} | {amt:,.0f} {curr}\n"
+            tot += (amt or 0)
         txt += f"\n*Jami: {tot:,.0f}*"
     else:
         txt += "Ma'lumot yo'q"
 
     kb = types.InlineKeyboardMarkup(row_width=2).add(
-        types.InlineKeyboardButton("✏️ Nomini tahrirlash", callback_data=f"catedit_{ttype}_{cat}"),
-        types.InlineKeyboardButton("🗑 O'chirish",         callback_data=f"catdel_{ttype}_{cat}"),
-        types.InlineKeyboardButton("⬅️ Orqaga",            callback_data=f"cattype_{ttype}"),
+        types.InlineKeyboardButton("✏️ Nomini tahrirlash",  callback_data=f"catedit_{ttype}_{cat}"),
+        types.InlineKeyboardButton("🗑 O'chirish",          callback_data=f"catdel_{ttype}_{cat}"),
+        types.InlineKeyboardButton("⬅️ Orqaga",             callback_data=f"cattype_{ttype}"),
     )
     await cb.message.edit_text(txt + f"\n\n{smart_suffx()}", reply_markup=kb, parse_mode="Markdown")
     await cb.answer()
 
+
+# ── Kategoriya nomini tahrirlash ──
 @dp.callback_query_handler(lambda c: c.data.startswith('catedit_'))
 async def cat_edit_ask(cb: types.CallbackQuery, state: FSMContext):
     parts = cb.data.split('_', 2)
@@ -917,6 +910,7 @@ async def cat_edit_ask(cb: types.CallbackQuery, state: FSMContext):
     await CatEdit.new_name.set()
     await cb.answer()
 
+
 @dp.message_handler(state=CatEdit.new_name)
 async def cat_edit_save(msg: types.Message, state: FSMContext):
     data     = await state.get_data()
@@ -928,7 +922,7 @@ async def cat_edit_save(msg: types.Message, state: FSMContext):
     if not new_name:
         return await msg.answer("❌ Ism bo'sh bo'lishi mumkin emas.")
 
-    db_executemany([
+    db_execute_many([
         (
             "UPDATE transactions SET category=%s WHERE user_id=%s AND category=%s AND type=%s",
             (new_name, uid, old_name, ttype)
@@ -950,6 +944,8 @@ async def cat_edit_save(msg: types.Message, state: FSMContext):
         reply_markup=kb, parse_mode="Markdown"
     )
 
+
+# ── Kategoriyani o'chirish (tasdiqlash) ──
 @dp.callback_query_handler(lambda c: c.data.startswith('catdel_'))
 async def cat_del_confirm(cb: types.CallbackQuery):
     parts = cb.data.split('_', 2)
@@ -976,6 +972,8 @@ async def cat_del_confirm(cb: types.CallbackQuery):
     )
     await cb.answer()
 
+
+# ── Kategoriyani o'chirish (bajarish) ──
 @dp.callback_query_handler(lambda c: c.data.startswith('catdelok_'))
 async def cat_del_do(cb: types.CallbackQuery):
     parts = cb.data.split('_', 2)
@@ -983,7 +981,7 @@ async def cat_del_do(cb: types.CallbackQuery):
     cat   = parts[2]
     uid   = cb.from_user.id
 
-    db_executemany([
+    db_execute_many([
         (
             "DELETE FROM transactions WHERE user_id=%s AND category=%s AND type=%s",
             (uid, cat, ttype)
@@ -1003,6 +1001,7 @@ async def cat_del_do(cb: types.CallbackQuery):
         reply_markup=kb, parse_mode="Markdown"
     )
     await cb.answer()
+
 
 # ───────────────────────────────────────────
 # CHAT TOZALASH
@@ -1040,7 +1039,7 @@ async def reset_ask(msg: types.Message):
 @dp.callback_query_handler(lambda c: c.data == "confirm_reset")
 async def reset_confirm(cb: types.CallbackQuery):
     uid = cb.from_user.id
-    db_executemany([
+    db_execute_many([
         ("DELETE FROM transactions WHERE user_id=%s", (uid,)),
         ("DELETE FROM categories  WHERE user_id=%s",  (uid,)),
     ])
@@ -1052,7 +1051,7 @@ async def reset_confirm(cb: types.CallbackQuery):
     await cb.answer()
 
 # ───────────────────────────────────────────
-# PDF HISOBOT
+# PDF HISOBOT (foydalanuvchi uchun)
 # ───────────────────────────────────────────
 @dp.message_handler(lambda m: m.text == "📄 PDF HISOBOT")
 async def pdf_menu(msg: types.Message):
@@ -1062,7 +1061,7 @@ async def pdf_menu(msg: types.Message):
         return await msg.answer(BLOCKED_MSG, parse_mode="Markdown")
     await touch(uid)
     kb = types.InlineKeyboardMarkup(row_width=1).add(
-        types.InlineKeyboardButton("📅 Shu oy",           callback_data="pdf_oy"),
+        types.InlineKeyboardButton("📅 Shu oy",          callback_data="pdf_oy"),
         types.InlineKeyboardButton("🌍 Barcha (Oyma-Oy)", callback_data="pdf_all"),
     )
     await msg.answer("Qaysi davrning hisobotini yuklab olmoqchisiz?", reply_markup=kb)
@@ -1083,15 +1082,15 @@ async def user_pdf(cb: types.CallbackQuery):
 # PDF YARATISH FUNKSIYALARI
 # ───────────────────────────────────────────
 async def make_pdf_monthly(user_id: int, send_to: int):
-    n     = now_uzb()
-    start = n.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    rows  = db_fetchall(
+    n      = now_uzb()
+    start  = n.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    rows   = db_fetchall(
         "SELECT date, category, type, amount, currency "
         "FROM transactions WHERE user_id=%s AND date>=%s ORDER BY date DESC",
         (user_id, start)
     )
-    urow  = db_fetchone("SELECT real_name FROM users WHERE user_id=%s", (user_id,))
-    uname = urow[0] if urow else str(user_id)
+    urow   = db_fetchone("SELECT real_name FROM users WHERE user_id=%s", (user_id,))
+    uname  = urow[0] if urow else str(user_id)
 
     if not rows:
         return await bot.send_message(send_to,
@@ -1114,16 +1113,16 @@ async def make_pdf_monthly(user_id: int, send_to: int):
     tk_s = tk_d = tch_s = tch_d = 0.0
     pdf.set_font("Arial", '', 9)
     for dt, cat, ttype, amt, curr in rows:
-        dt_str = _to_dt(dt).strftime('%Y-%m-%d') if dt else "?"
-        pdf.cell(35, 8, dt_str,          1)
-        pdf.cell(50, 8, str(cat)[:22],   1)
-        pdf.cell(25, 8, str(ttype),      1)
-        pdf.cell(35, 8, f"{amt:,.0f}",   1)
-        pdf.cell(20, 8, str(curr),       1)
+        dt_str = _to_dt(dt).strftime('%Y-%m-%d')
+        pdf.cell(35, 8, dt_str,         1)
+        pdf.cell(50, 8, str(cat)[:22],  1)
+        pdf.cell(25, 8, str(ttype),     1)
+        pdf.cell(35, 8, f"{amt:,.0f}",  1)
+        pdf.cell(20, 8, str(curr),      1)
         pdf.ln()
         if ttype == "KIRIM":
-            if curr == "$": tk_d  += (amt or 0)
-            else:           tk_s  += (amt or 0)
+            if curr == "$": tk_d += (amt or 0)
+            else:           tk_s += (amt or 0)
         else:
             if curr == "$": tch_d += (amt or 0)
             else:           tch_s += (amt or 0)
@@ -1191,7 +1190,7 @@ async def make_pdf_all(user_id: int, send_to: int):
         mo_ks = mo_kd = mo_chs = mo_chd = 0.0
         pdf.set_font("Arial", '', 8)
         for dt, cat, ttype, amt, curr in months[mo]:
-            dt_str = _to_dt(dt).strftime('%Y-%m-%d') if dt else "?"
+            dt_str = _to_dt(dt).strftime('%Y-%m-%d')
             pdf.cell(30, 7, dt_str,        1)
             pdf.cell(42, 7, str(cat)[:20], 1)
             pdf.cell(20, 7, str(ttype),    1)
@@ -1265,9 +1264,10 @@ async def admin_panel(msg: types.Message):
     await _send_admin_panel(msg.chat.id)
 
 async def _send_admin_panel(chat_id: int):
-    n    = now_uzb()
+    n = now_uzb()
     rows = db_fetchall(
-        "SELECT user_id, real_name, username, phone, reg_date, sub_end_date, is_active FROM users"
+        "SELECT user_id, real_name, username, phone, reg_date, sub_end_date, is_active "
+        "FROM users"
     )
 
     yangi, faol, tugagan, chala = [], [], [], []
@@ -1278,10 +1278,10 @@ async def _send_admin_panel(chat_id: int):
         st_icon = "✅" if act == 1 else "🚫"
         label   = f"{st_icon} {rname or '?'} | @{uname or '?'} | {tel or '?'}"
 
-        if not tel:                              chala.append((uid, label))
-        elif n < reg_dt + timedelta(days=1):     yangi.append((uid, label))
-        elif sub_dt and n < sub_dt:              faol.append((uid, label))
-        else:                                    tugagan.append((uid, label))
+        if not tel:                                chala.append((uid, label))
+        elif n < reg_dt + timedelta(days=1):       yangi.append((uid, label))
+        elif sub_dt and n < sub_dt:                faol.append((uid, label))
+        else:                                      tugagan.append((uid, label))
 
     txt = (
         f"👑 *ADMIN PANEL*\n\n"
@@ -1299,20 +1299,20 @@ async def _send_admin_panel(chat_id: int):
 @dp.callback_query_handler(lambda c: c.data.startswith('ap_') and c.data[3:].isdigit())
 async def ap_user_card(cb: types.CallbackQuery):
     if cb.from_user.id != ADMIN_ID: return
-    uid = int(cb.data[3:])
+    uid  = int(cb.data[3:])
     await _show_user_card(cb.message, uid, edit=True)
     await cb.answer()
 
 async def _show_user_card(msg: types.Message, uid: int, edit: bool = False):
     u = db_fetchone("SELECT * FROM users WHERE user_id=%s", (uid,))
     if not u: return
-
     reg_dt = _to_dt(u[4])
     kunlar = (now_uzb() - reg_dt).days
-    sub_dt = _to_dt(u[6])
 
-    if sub_dt:
-        left = sub_dt - now_uzb()
+    sub_s  = u[6]
+    if sub_s:
+        sub_dt = _to_dt(sub_s)
+        left   = sub_dt - now_uzb()
         if left.total_seconds() > 0:
             sub_str = f"✅ {sub_dt.strftime('%d.%m.%Y')} ({left.days} kun qoldi)"
         else:
@@ -1325,7 +1325,9 @@ async def _show_user_card(msg: types.Message, uid: int, edit: bool = False):
         else:
             sub_str = "❌ Trial tugagan"
 
-    tx_count = db_fetchone("SELECT COUNT(*) FROM transactions WHERE user_id=%s", (uid,))[0]
+    tx_count = db_fetchone(
+        "SELECT COUNT(*) FROM transactions WHERE user_id=%s", (uid,)
+    )[0]
 
     text = (
         f"👤 *Foydalanuvchi ma'lumotlari*\n\n"
@@ -1339,11 +1341,11 @@ async def _show_user_card(msg: types.Message, uid: int, edit: bool = False):
         f"🔘 Holat:     {'✅ Faol' if u[7]==1 else '🚫 Bloklangan'}"
     )
     kb = types.InlineKeyboardMarkup(row_width=2).add(
-        types.InlineKeyboardButton("➕ 1 Oylik Obuna",     callback_data=f"sub_{uid}"),
-        types.InlineKeyboardButton("📄 PDF (shu oy)",      callback_data=f"apdf_{uid}_oy"),
-        types.InlineKeyboardButton("📋 PDF (barcha)",      callback_data=f"apdf_{uid}_all"),
-        types.InlineKeyboardButton("🚫 Bloklash / Ochish", callback_data=f"blk_{uid}"),
-        types.InlineKeyboardButton("⬅️ Orqaga",            callback_data="ap_back"),
+        types.InlineKeyboardButton("➕ 1 Oylik Obuna",        callback_data=f"sub_{uid}"),
+        types.InlineKeyboardButton("📄 PDF (shu oy)",         callback_data=f"apdf_{uid}_oy"),
+        types.InlineKeyboardButton("📋 PDF (barcha)",         callback_data=f"apdf_{uid}_all"),
+        types.InlineKeyboardButton("🚫 Bloklash / Ochish",    callback_data=f"blk_{uid}"),
+        types.InlineKeyboardButton("⬅️ Orqaga",               callback_data="ap_back"),
     )
     if edit:
         await msg.edit_text(text, reply_markup=kb, parse_mode="Markdown")
@@ -1412,10 +1414,10 @@ async def ap_block(cb: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data.startswith('apdf_'))
 async def ap_pdf(cb: types.CallbackQuery):
     if cb.from_user.id != ADMIN_ID: return
-    parts = cb.data.split('_')
-    uid   = int(parts[1])
-    mode  = parts[2]
-    admin = cb.from_user.id
+    parts   = cb.data.split('_')
+    uid     = int(parts[1])
+    mode    = parts[2]
+    admin   = cb.from_user.id
 
     await cb.answer("PDF tayyorlanmoqda...")
     await bot.send_message(admin, "PDF tayyorlanmoqda... ⏳")
@@ -1436,7 +1438,6 @@ async def ap_back(cb: types.CallbackQuery):
 # ISHGA TUSHIRISH
 # ───────────────────────────────────────────
 if __name__ == '__main__':
-    # DB ni ishga tushirishda yaratamiz
     init_db()
 
     async def on_startup(dp):
