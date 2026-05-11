@@ -19,7 +19,7 @@ from fpdf import FPDF
 # ───────────────────────────────────────────
 # SOZLAMALAR
 # ───────────────────────────────────────────
-API_TOKEN = os.environ.get('API_TOKEN', '8435215607:AAHaJ3guIwMJimnMoTBAzMaPBCBb2ShYeEw')
+API_TOKEN = os.environ.get('API_TOKEN', '8134339991:AAFd_mha0IyO77lhklIi62b_Q3Y-rlhxEUo')
 ADMIN_ID  = int(os.environ.get('ADMIN_ID', '1680174090'))
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
@@ -1329,16 +1329,24 @@ async def _show_user_card(msg: types.Message, uid: int, edit: bool = False):
         "SELECT COUNT(*) FROM transactions WHERE user_id=%s", (uid,)
     )[0]
 
+    # HTML parse_mode ishlatamiz — username ichidagi _ belgisi Markdown ni buzmaydi
+    def esc(val):
+        """HTML uchun xavfli belgilarni himoyalaydi"""
+        return str(val or "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    holat = "✅ Faol" if u[7] == 1 else "🚫 Bloklangan"
+    uname_str = f"@{esc(u[2])}" if u[2] else "—"
+
     text = (
-        f"👤 *Foydalanuvchi ma'lumotlari*\n\n"
-        f"📝 Ism:       `{u[1] or '—'}`\n"
-        f"🆔 ID:        `{u[0]}`\n"
-        f"🔗 Username:  @{u[2] or '—'}\n"
-        f"📞 Tel:       `{u[3] or '—'}`\n"
-        f"📅 A'zo:      {kunlar} kun oldin\n"
-        f"⏳ Obuna:     {sub_str}\n"
+        f"👤 <b>Foydalanuvchi ma'lumotlari</b>\n\n"
+        f"📝 Ism:        <code>{esc(u[1])}</code>\n"
+        f"🆔 ID:         <code>{u[0]}</code>\n"
+        f"🔗 Username:   {uname_str}\n"
+        f"📞 Tel:        <code>{esc(u[3])}</code>\n"
+        f"📅 A'zo:       {kunlar} kun oldin\n"
+        f"⏳ Obuna:      {sub_str}\n"
         f"📊 Operatsiya: {tx_count} ta\n"
-        f"🔘 Holat:     {'✅ Faol' if u[7]==1 else '🚫 Bloklangan'}"
+        f"🔘 Holat:      {holat}"
     )
     kb = types.InlineKeyboardMarkup(row_width=2).add(
         types.InlineKeyboardButton("➕ 1 Oylik Obuna",        callback_data=f"sub_{uid}"),
@@ -1348,9 +1356,9 @@ async def _show_user_card(msg: types.Message, uid: int, edit: bool = False):
         types.InlineKeyboardButton("⬅️ Orqaga",               callback_data="ap_back"),
     )
     if edit:
-        await msg.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+        await msg.edit_text(text, reply_markup=kb, parse_mode="HTML")
     else:
-        await msg.answer(text, reply_markup=kb, parse_mode="Markdown")
+        await msg.answer(text, reply_markup=kb, parse_mode="HTML")
 
 @dp.callback_query_handler(lambda c: c.data.startswith('sub_'))
 async def ap_sub_confirm(cb: types.CallbackQuery):
